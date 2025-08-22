@@ -1,0 +1,111 @@
+#!/usr/bin/python3
+
+import argparse
+import sys
+import os
+
+import torchvision.transforms as transforms
+from torchvision.utils import save_image
+from torch.utils.data import DataLoader
+from torch.autograd import Variable
+import torch
+from PIL import Image
+
+from model_1 import Generator
+from test_dataset import ImageDataset
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--batchSize', type=int, default=1, help='size of the batches')
+parser.add_argument('--dataroot', type=str, default='datasets/128/', help='root directory of the dataset')
+parser.add_argument('--input_nc', type=int, default=3, help='number of channels of input data')
+parser.add_argument('--output_nc', type=int, default=3, help='number of channels of output data')
+parser.add_argument('--h', type=int, default=902, help='size of the data (squared assumed)')
+parser.add_argument('--w', type=int, default=635, help='size of the data (squared assumed)')
+parser.add_argument('--cuda', action='store_true', help='use GPU computation')
+parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads to use during batch generation')
+parser.add_argument('--generator_A2B', type=str, default='output/netG_A2B.pth', help='A2B generator checkpoint file')
+parser.add_argument('--generator_B2A', type=str, default='output/netG_B2A.pth', help='B2A generator checkpoint file')
+opt = parser.parse_args()
+print(opt)
+
+opt.cuda = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+###### Definition of variables ######
+# Networks
+netG_A2B = Generator(opt.input_nc, opt.output_nc)
+netG_B2A = Generator(opt.output_nc, opt.input_nc)
+
+if opt.cuda:
+    netG_A2B.cuda()
+    netG_B2A.cuda()
+
+# Load state dicts
+netG_A2B.load_state_dict(torch.load(opt.generator_A2B))
+netG_B2A.load_state_dict(torch.load(opt.generator_B2A))
+
+# Set model's test mode
+netG_A2B.eval()
+netG_B2A.eval()
+
+# Inputs & targets memory allocation
+Tensor = torch.cuda.FloatTensor if opt.cuda else torch.Tensor
+input_A = Tensor(opt.batchSize, opt.input_nc, opt.w, opt.h)
+
+# input_B = Tensor(opt.batchSize, opt.output_nc, opt.size, opt.size)
+
+# Dataset loader
+transforms_ = [ transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)) ]
+dataloader = DataLoader(ImageDataset(opt.dataroot, transforms_=transforms_, mode='test'),
+                        batch_size=opt.batchSize, shuffle=False, num_workers=opt.n_cpu)
+###################################
+
+###### Testing######
+
+# Create output dirs if they don't exist
+# if not os.path.exists('output/A'):
+#     os.makedirs('output/A')
+if not os.path.exists('output/B'):
+    os.makedirs('output/B')
+
+# def denoising_image(Image: torch.Tensor, denoising_factor=0.5):
+#     """
+#     add noise for the input image.
+#     :param Image:
+#     :param denoising_factor:
+#     :return:
+#     """
+#     return torch.add(Image, torch.mul(torch.randn_like(Image), denoising_factor))
+
+for i, batch in enumerate(dataloader):
+    print("*************i*************** ", i)
+    # Set model input
+    real_A = Variable(input_A.copy_(batch['A']))
+    # name  = str(batch['file_A'][i]).spilt('A')
+    f1 = str(batch['file_A'][i]).split('A')[1] # /T1_new_yuan_1.png',)
+    f2 = str(f1).split(',')[0] # /T1_new_yuan_1.png'
+    file_name = f2.split('/')[1].split('.')[0]
+    print(file_name)
+    # real_B = Variable(input_B.copy_(batch['B']))
+
+    # Generate output
+    # real_A_noise = denoising_image(real_A)
+    fake_B = 0.5 * (netG_A2B(real_A).data + 1.0)
+    # fake_A = 0.5*(netG_B2A(real_B).data + 1.0)
+
+    # Save image files
+    # save_image(fake_A, 'output/A/%04d.png' % (i+1))
+    file_dir = './output/B/'
+    file_na = file_dir + file_name + '.png'
+    save_image(fake_B, file_na)
+    img = Image.open(file_na)
+    new_size = (902, 635)  # 902, 635
+    resize_img = img.resize(new_size)
+    resize_img.save(file_na)
+
+    # save_image(fake_B, 'output/B/%04d.png' % (i))
+
+    sys.stdout.write('\rGenerated images %04d of %04d' % (i, len(dataloader)))
+
+sys.stdout.write('\n')
+###################################
